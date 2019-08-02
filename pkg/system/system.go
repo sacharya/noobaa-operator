@@ -31,6 +31,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	conditionsv1 "github.com/openshift/custom-resource-status/conditions/v1"
+
 )
 
 const (
@@ -177,15 +180,19 @@ func (s *System) ReconcileSystem() error {
 	s.SetPhase(nbv1.SystemPhaseCreating)
 
 	if err := s.ReconcileSecretServer(); err != nil {
+		s.setErrorCondition(err)
 		return err
 	}
 	if err := s.ReconcileObject(s.CoreApp, s.SetDesiredCoreApp); err != nil {
+		s.setErrorCondition(err)
 		return err
 	}
 	if err := s.ReconcileObject(s.ServiceMgmt, s.SetDesiredServiceMgmt); err != nil {
+		s.setErrorCondition(err)
 		return err
 	}
 	if err := s.ReconcileObject(s.ServiceS3, s.SetDesiredServiceS3); err != nil {
+		s.setErrorCondition(err)
 		return err
 	}
 
@@ -195,16 +202,19 @@ func (s *System) ReconcileSystem() error {
 	s.SetPhase(nbv1.SystemPhaseWaitingToConnect)
 
 	if err := s.InitNooBaaClient(); err != nil {
+		s.setErrorCondition(err)
 		return err
 	}
 
 	s.SetPhase(nbv1.SystemPhaseConfiguring)
 
 	if err := s.ReconcileSecretOp(); err != nil {
+		s.setErrorCondition(err)
 		return err
 	}
 
 	if err := s.ReconcileSecretAdmin(); err != nil {
+		s.setErrorCondition(err)
 		return err
 	}
 
@@ -609,25 +619,131 @@ var readmeTemplate = template.Must(template.New("NooBaaSystem.Status.Readme").Pa
 
 `))
 
+func (s *System) setErrorCondition(err error) {
+	reason := "ReconcileFailed"
+	message := fmt.Sprintf("Error while reconciling: %v", err)
+	conditionsv1.SetStatusCondition(&s.NooBaa.Status.Conditions, conditionsv1.Condition{
+		Type:   conditionsv1.ConditionAvailable,
+		Status: corev1.ConditionUnknown,
+		Reason: reason,
+		Message: message,
+	})
+	conditionsv1.SetStatusCondition(&s.NooBaa.Status.Conditions, conditionsv1.Condition{
+		Type:   conditionsv1.ConditionProgressing,
+		Status: corev1.ConditionFalse,
+		Reason: reason,
+		Message: message,
+	})
+	conditionsv1.SetStatusCondition(&s.NooBaa.Status.Conditions, conditionsv1.Condition{
+		Type:   conditionsv1.ConditionDegraded,
+		Status: corev1.ConditionTrue,
+		Reason: reason,
+		Message: message,
+	})
+	conditionsv1.SetStatusCondition(&s.NooBaa.Status.Conditions, conditionsv1.Condition{
+		Type:   conditionsv1.ConditionUpgradeable,
+		Status: corev1.ConditionUnknown,
+		Reason: reason,
+		Message: message,
+	})
+}
+
+func (s *System) setAvailableCondition(reason string, message string) {
+	conditionsv1.SetStatusCondition(&s.NooBaa.Status.Conditions, conditionsv1.Condition{
+		Type:   conditionsv1.ConditionAvailable,
+		Status: corev1.ConditionTrue,
+		Reason: reason,
+		Message: message,
+	})
+	conditionsv1.SetStatusCondition(&s.NooBaa.Status.Conditions, conditionsv1.Condition{
+		Type:   conditionsv1.ConditionProgressing,
+		Status: corev1.ConditionFalse,
+		Reason: reason,
+		Message: message,
+	})
+	conditionsv1.SetStatusCondition(&s.NooBaa.Status.Conditions, conditionsv1.Condition{
+		Type:   conditionsv1.ConditionDegraded,
+		Status: corev1.ConditionFalse,
+		Reason: reason,
+		Message: message,
+	})
+	conditionsv1.SetStatusCondition(&s.NooBaa.Status.Conditions, conditionsv1.Condition{
+		Type:   conditionsv1.ConditionUpgradeable,
+		Status: corev1.ConditionTrue,
+		Reason: reason,
+		Message: message,
+	})
+}
+
+func (s *System) setProgressingCondition(reason string, message string) {
+	conditionsv1.SetStatusCondition(&s.NooBaa.Status.Conditions, conditionsv1.Condition{
+		Type:   conditionsv1.ConditionAvailable,
+		Status: corev1.ConditionFalse,
+		Reason: reason,
+		Message: message,
+	})
+	conditionsv1.SetStatusCondition(&s.NooBaa.Status.Conditions, conditionsv1.Condition{
+		Type:   conditionsv1.ConditionProgressing,
+		Status: corev1.ConditionTrue,
+		Reason: reason,
+		Message: message,
+	})
+	conditionsv1.SetStatusCondition(&s.NooBaa.Status.Conditions, conditionsv1.Condition{
+		Type:   conditionsv1.ConditionDegraded,
+		Status: corev1.ConditionFalse,
+		Reason: reason,
+		Message: message,
+	})
+	conditionsv1.SetStatusCondition(&s.NooBaa.Status.Conditions, conditionsv1.Condition{
+		Type:   conditionsv1.ConditionUpgradeable,
+		Status: corev1.ConditionFalse,
+		Reason: reason,
+		Message: message,
+	})
+}
+
 // SetPhase updates the status phase and conditions
 func (s *System) SetPhase(phase nbv1.SystemPhase) {
-	s.Logger.Warnf("GGG SetPhase %s", phase)
+	s.Logger.Warnf("SetPhase %s", phase)
 	s.NooBaa.Status.Phase = phase
+	//if s.NooBaa.Status.Conditions == nil || len(s.NooBaa.Status.Conditions) == 0 {
+	//	s.NooBaa.Status.Conditions = []nbv1.SystemCondition{{
+	//		Type:    nbv1.ConditionTypePhase,
+	//		Reason:  "ReconcileSetPhase",
+	//		Message: "Reconcile reached phase",
+	//	}}
+	//}
+	reason := fmt.Sprintf("%v", phase)
+	message := fmt.Sprintf("%v", phase)
 	if s.NooBaa.Status.Conditions == nil || len(s.NooBaa.Status.Conditions) == 0 {
-		s.NooBaa.Status.Conditions = []nbv1.SystemCondition{{
-			Type:    nbv1.ConditionTypePhase,
-			Reason:  "ReconcileSetPhase",
-			Message: "Reconcile reached phase",
-		}}
+		s.setAvailableCondition(reason, message)
 	}
-	phaseCond := &s.NooBaa.Status.Conditions[0]
-	newPhaseStatus := nbv1.ConditionStatus(phase)
-	currstatus := phaseCond.Status
-	if currstatus != newPhaseStatus {
-		phaseCond.LastTransitionTime = metav1.Time{Time: time.Now()}
+
+	switch phase {
+		case nbv1.SystemPhaseVerifying:
+			reason = "ReconcileInit"
+			message = "Initializing noobaa cluster"
+			s.setAvailableCondition(reason, message)
+		case nbv1.SystemPhaseCreating:
+			s.setProgressingCondition(reason, message)
+		case nbv1.SystemPhaseWaitingToConnect:
+			s.setProgressingCondition(reason, message)
+		case nbv1.SystemPhaseConfiguring:
+			s.setProgressingCondition(reason, message)
+		case nbv1.SystemPhaseReady:
+			reason = "Reconcilecompleted"
+			message = "ReconcileCompleted"
+			s.setAvailableCondition(reason, message)
+		default:
 	}
-	phaseCond.Status = newPhaseStatus
-	phaseCond.LastProbeTime = metav1.Time{Time: time.Now()}
+	//phaseCond := &s.NooBaa.Status.Conditions[0]
+	//newPhaseStatus := nbv1.ConditionStatus(phase)
+	//currstatus := phaseCond.Status
+	//if currstatus != newPhaseStatus {
+	//	phaseCond.LastTransitionTime = metav1.Time{Time: time.Now()}
+	//}
+	//phaseCond.Status = newPhaseStatus
+	//phaseCond.LastProbeTime = metav1.Time{Time: time.Now()}
 }
 
 // Complete populates the noobaa status at the end of reconcile.
